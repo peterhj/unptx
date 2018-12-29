@@ -190,6 +190,10 @@ pub enum UnptxLine {
 }
 
 impl UnptxLine {
+  pub fn parse<L: Iterator<Item=UnptxToken>>(line_lexer: L) -> Result<UnptxLine, (Option<(UnptxToken, ())>, &'static str)> {
+    parse(line_lexer.map(|tok| (tok, ())))
+  }
+
   pub fn is_empty(&self) -> bool {
     match self {
       &UnptxLine::Empty => true,
@@ -199,7 +203,7 @@ impl UnptxLine {
 }
 
 parser! {
-  fn parse_line_(UnptxToken, ());
+  fn parse(UnptxToken, ());
   line: UnptxLine {
     => UnptxLine::Empty,
     LCurl => UnptxLine::Empty,
@@ -276,10 +280,6 @@ parser! {
   }
 }
 
-pub fn parse_line<L: Iterator<Item=UnptxToken>>(line_lexer: L) -> Result<UnptxLine, (Option<(UnptxToken, ())>, &'static str)> {
-  parse_line_(line_lexer.map(|tok| (tok, ())))
-}
-
 pub struct UnptxLines<R> {
   reader:   R,
 }
@@ -301,7 +301,7 @@ impl<R: BufRead> Iterator for UnptxLines<R> {
     if buf.is_empty() {
       return None;
     }
-    match parse_line(UnptxLineLexer::new(&buf)) {
+    match UnptxLine::parse(UnptxLineLexer::new(&buf)) {
       Err(e) => panic!("unptx: syntax error: {:?}", e),
       Ok(line) => Some(line),
     }
