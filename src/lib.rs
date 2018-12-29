@@ -17,6 +17,8 @@ pub enum UnptxToken {
   DotAddressSize,
   DotVisible,
   DotEntry,
+  DotFunc,
+  Colon,
   Semi,
   LParen,
   RParen,
@@ -27,7 +29,7 @@ pub enum UnptxToken {
   BarSync,
   // literals
   IntLit(i64),
-  FloatLit(i64, i64),
+  Int2Lit(i64, i64),
   Ident(String),
 }
 
@@ -40,6 +42,8 @@ lexer! {
   r"\.address_size" => UnptxToken::DotAddressSize,
   r"\.visible" => UnptxToken::DotVisible,
   r"\.entry" => UnptxToken::DotEntry,
+  r"\.func" => UnptxToken::DotFunc,
+  r":" => UnptxToken::Colon,
   r";" => UnptxToken::Semi,
   r"\(" => UnptxToken::LParen,
   r"\)" => UnptxToken::RParen,
@@ -47,9 +51,22 @@ lexer! {
   r"}" => UnptxToken::RCurl,
   r"ret" => UnptxToken::Ret,
   r"bar\.sync" => UnptxToken::BarSync,
-  r"[0-9]+" => UnptxToken::IntLit(0),
-  r"[0-9]+\.[0-9]*" => UnptxToken::FloatLit(0, 0),
-  r"[_A-Za-z][_0-9A-Za-z]*" => UnptxToken::Ident(text.to_owned()),
+  r"[0-9]+" => {
+    match text.parse() {
+      Ok(x) => UnptxToken::IntLit(x),
+      _ => panic!(),
+    }
+  }
+  r"[0-9]+\.[0-9]+" => {
+    let ts: Vec<_> = text.split(".").collect();
+    assert_eq!(ts.len(), 2);
+    match (ts[0].parse(), ts[1].parse()) {
+      (Ok(x0), Ok(x1)) => UnptxToken::Int2Lit(x0, x1),
+      _ => panic!(),
+    }
+  }
+  r"[a-zA-Z][a-zA-Z0-9_]*" => UnptxToken::Ident(text.to_owned()),
+  r"[_$%][a-zA-Z0-9_]+" => UnptxToken::Ident(text.to_owned()),
 }
 
 pub struct UnptxLineLexer<'s> {
@@ -123,6 +140,7 @@ pub enum Directive {
   AddressSize(AddressSize),
   Visible,
   Entry,
+  Func,
 }
 
 #[derive(Debug)]
@@ -165,9 +183,27 @@ parser! {
     inst[i] => UnptxLine::Inst(i),
   }
   directive: Directive {
-    DotVersion FloatLit(_, _) => Directive::Version(Version::Ptx_3_2),
-    DotTarget Ident(_) => Directive::Target(Target::Sm_3_5),
-    DotAddressSize IntLit(_) => Directive::AddressSize(AddressSize::_64),
+    DotVersion Int2Lit(major, minor) => {
+      let v = match (major, minor) {
+        (3, 2) => Version::Ptx_3_2,
+        _ => panic!(),
+      };
+      Directive::Version(v)
+    }
+    DotTarget Ident(target_arch) => {
+      let t = match &target_arch as &str {
+        "sm_35" => Target::Sm_3_5,
+        _ => panic!(),
+      };
+      Directive::Target(t)
+    }
+    DotAddressSize IntLit(bits) => {
+      let sz = match bits {
+        64 => AddressSize::_64,
+        _ => panic!(),
+      };
+      Directive::AddressSize(sz)
+    }
     DotVisible => Directive::Visible,
     DotEntry => Directive::Entry,
   }
