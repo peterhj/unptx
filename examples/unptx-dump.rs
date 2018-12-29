@@ -9,13 +9,11 @@ fn main() {
   let args: Vec<_> = env::args().collect();
   let file = File::open(PathBuf::from(&args[1])).unwrap();
   let reader = BufReader::new(file);
-  /*for line in unptx::UnptxLines::new(reader) {
+  /*for line in unptx::UnptxLines::from_reader(reader) {
     if !line.is_empty() {
       println!("{:?}", line);
     }
   }*/
-  let ptx_module = unptx::UnptxModuleBuilder::default()
-    .with_lines(unptx::UnptxLines::new(reader))
-    .unwrap();
+  let ptx_module = unptx::UnptxModule::from_reader(reader).unwrap();
   println!("{:?}", ptx_module);
 }

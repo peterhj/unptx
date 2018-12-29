@@ -285,7 +285,7 @@ pub struct UnptxLines<R> {
 }
 
 impl<R> UnptxLines<R> {
-  pub fn new(reader: R) -> UnptxLines<R> {
+  pub fn from_reader(reader: R) -> UnptxLines<R> {
     UnptxLines{reader}
   }
 }
@@ -327,7 +327,7 @@ impl UnptxModuleBuilder {
     })
   }
 
-  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, mut lines: I) -> Result<UnptxModule, ()> {
+  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, lines: I) -> Result<UnptxModule, ()> {
     for line in lines {
       // TODO
       match (self._state, line) {
@@ -366,4 +366,11 @@ pub struct UnptxModule {
   pub version:  Version,
   pub target:   Target,
   pub addrsize: AddressSize,
+}
+
+impl UnptxModule {
+  pub fn from_reader<R: BufRead>(reader: R) -> Result<UnptxModule, ()> {
+    UnptxModuleBuilder::default()
+      .with_lines(UnptxLines::from_reader(reader))
+  }
 }
