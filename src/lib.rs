@@ -121,51 +121,68 @@ pub enum Directive {
   Version(Version),
   Target(Target),
   AddressSize(AddressSize),
+  Visible,
+  Entry,
 }
 
 #[derive(Debug)]
-pub enum Attribute {
-  Visible,
-  Entry,
+pub enum Inst {
+  Ret,
+  BarSync,
 }
 
 #[derive(Debug)]
 pub enum UnptxLine {
   Empty,
   Directive(Directive),
-  KernelEntry,
+  KernelDirective,
+  Inst(Inst),
 }
 
-#[derive(Debug)]
-pub struct Identifier(pub String);
+impl UnptxLine {
+  pub fn is_empty(&self) -> bool {
+    match self {
+      &UnptxLine::Empty => true,
+      _ => false,
+    }
+  }
+}
+
+//#[derive(Debug)]
+//pub struct Identifier(pub String);
 
 parser! {
   fn parse_line_(UnptxToken, ());
   line: UnptxLine {
     => UnptxLine::Empty,
+    LCurl => UnptxLine::Empty,
+    RCurl => UnptxLine::Empty,
     directive[d] => UnptxLine::Directive(d),
-    attributes[attrs] Ident(id) LParen RParen => {
+    directives[dirs] Ident(id) LParen RParen => {
       // TODO
-      UnptxLine::KernelEntry
+      UnptxLine::KernelDirective
     }
+    inst[i] => UnptxLine::Inst(i),
   }
   directive: Directive {
-    DotVersion => Directive::Version(Version::Ptx_3_2),
-    DotTarget => Directive::Target(Target::Sm_3_5),
-    DotAddressSize => Directive::AddressSize(AddressSize::_64),
+    DotVersion FloatLit(_, _) => Directive::Version(Version::Ptx_3_2),
+    DotTarget Ident(_) => Directive::Target(Target::Sm_3_5),
+    DotAddressSize IntLit(_) => Directive::AddressSize(AddressSize::_64),
+    DotVisible => Directive::Visible,
+    DotEntry => Directive::Entry,
   }
-  attributes: Vec<Attribute> {
-    attribute[a] => {
-      vec![a]
+  directives: Vec<Directive> {
+    directive[d] => {
+      vec![d]
     }
-    attributes[mut attrs] attribute[a] => {
-      attrs.push(a);
-      attrs
+    directives[mut dirs] directive[d] => {
+      dirs.push(d);
+      dirs
     }
   }
-  attribute: Attribute {
-    DotVisible => Attribute::Visible,
-    DotEntry => Attribute::Entry,
+  inst: Inst {
+    Ret Semi => Inst::Ret,
+    BarSync IntLit(_) Semi => Inst::BarSync,
   }
 }
 
@@ -195,7 +212,7 @@ impl<R: BufRead> Iterator for UnptxLines<R> {
       return None;
     }
     match parse_line(UnptxLineLexer::new(&buf)) {
-      Err(_) => panic!("unptx: syntax error"),
+      Err(e) => panic!("unptx: syntax error: {:?}", e),
       Ok(line) => Some(line),
     }
   }
