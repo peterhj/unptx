@@ -120,24 +120,51 @@ impl<'s> Iterator for UnptxLineLexer<'s> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Version {
   Ptx_3_2,
+  Ptx_4_0,
+  Ptx_4_1,
+  Ptx_4_2,
+  Ptx_4_3,
+  Ptx_5_0,
+  Ptx_6_0,
+  Ptx_6_1,
+  Ptx_6_3,
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Target {
+  Sm_2_0,
+  Sm_2_1,
+  Sm_3_0,
+  Sm_3_2,
   Sm_3_5,
+  Sm_3_7,
+  Sm_5_0,
+  Sm_5_2,
+  Sm_5_3,
+  Sm_6_0,
+  Sm_6_1,
+  Sm_6_2,
+  Sm_7_0,
+  Sm_7_2,
+  Sm_7_5,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AddressSize {
+  _32,
   _64,
 }
 
 #[derive(Debug)]
-pub enum Directive {
+pub enum ModuleDirective {
   Version(Version),
   Target(Target),
   AddressSize(AddressSize),
+}
+
+#[derive(Debug)]
+pub enum Directive {
   Visible,
   Entry,
   Func,
@@ -152,8 +179,9 @@ pub enum Inst {
 #[derive(Debug)]
 pub enum UnptxLine {
   Empty,
-  Directive(Directive),
+  ModuleDirective(ModuleDirective),
   KernelDirective,
+  FunctionDirective,
   Inst(Inst),
 }
 
@@ -166,44 +194,66 @@ impl UnptxLine {
   }
 }
 
-//#[derive(Debug)]
-//pub struct Identifier(pub String);
-
 parser! {
   fn parse_line_(UnptxToken, ());
   line: UnptxLine {
     => UnptxLine::Empty,
     LCurl => UnptxLine::Empty,
     RCurl => UnptxLine::Empty,
-    directive[d] => UnptxLine::Directive(d),
+    module_directive[d] => UnptxLine::ModuleDirective(d),
     directives[dirs] Ident(id) LParen RParen => {
       // TODO
       UnptxLine::KernelDirective
     }
     inst[i] => UnptxLine::Inst(i),
   }
-  directive: Directive {
+  module_directive: ModuleDirective {
     DotVersion Int2Lit(major, minor) => {
       let v = match (major, minor) {
         (3, 2) => Version::Ptx_3_2,
+        (4, 0) => Version::Ptx_4_0,
+        (4, 1) => Version::Ptx_4_1,
+        (4, 2) => Version::Ptx_4_2,
+        (4, 3) => Version::Ptx_4_3,
+        (5, 0) => Version::Ptx_5_0,
+        (6, 0) => Version::Ptx_6_0,
+        (6, 1) => Version::Ptx_6_1,
+        (6, 3) => Version::Ptx_6_3,
         _ => panic!(),
       };
-      Directive::Version(v)
+      ModuleDirective::Version(v)
     }
     DotTarget Ident(target_arch) => {
       let t = match &target_arch as &str {
+        "sm_20" => Target::Sm_2_0,
+        "sm_21" => Target::Sm_2_1,
+        "sm_30" => Target::Sm_3_0,
+        "sm_32" => Target::Sm_3_2,
         "sm_35" => Target::Sm_3_5,
+        "sm_37" => Target::Sm_3_7,
+        "sm_50" => Target::Sm_5_0,
+        "sm_52" => Target::Sm_5_2,
+        "sm_53" => Target::Sm_5_3,
+        "sm_60" => Target::Sm_6_0,
+        "sm_61" => Target::Sm_6_1,
+        "sm_62" => Target::Sm_6_2,
+        "sm_70" => Target::Sm_7_0,
+        "sm_72" => Target::Sm_7_2,
+        "sm_75" => Target::Sm_7_5,
         _ => panic!(),
       };
-      Directive::Target(t)
+      ModuleDirective::Target(t)
     }
     DotAddressSize IntLit(bits) => {
       let sz = match bits {
+        32 => AddressSize::_32,
         64 => AddressSize::_64,
         _ => panic!(),
       };
-      Directive::AddressSize(sz)
+      ModuleDirective::AddressSize(sz)
     }
+  }
+  directive: Directive {
     DotVisible => Directive::Visible,
     DotEntry => Directive::Entry,
   }
