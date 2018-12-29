@@ -116,6 +116,8 @@ impl<'s> Iterator for UnptxLineLexer<'s> {
   }
 }
 
+// NB: These PTX versions should correspond exactly to the ones in the
+// LLVM NVPTX backend (see: lib/Target/NVPTX/NVPTX.td).
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Version {
@@ -130,6 +132,8 @@ pub enum Version {
   Ptx_6_3,
 }
 
+// NB: These target archs should correspond exactly to the ones in the
+// LLVM NVPTX backend (see: lib/Target/NVPTX/NVPTX.td).
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Target {
@@ -305,22 +309,60 @@ impl<R: BufRead> Iterator for UnptxLines<R> {
 }
 
 #[derive(Default)]
-pub struct UnptxBuilder {
+pub struct UnptxModuleBuilder {
   version:  Option<Version>,
   target:   Option<Target>,
   addrsize: Option<AddressSize>,
+  //kernels:      Vec<()>,
+  //functions:    Vec<()>,
   _state:   (),
 }
 
-impl UnptxBuilder {
-  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, mut lines: I) -> Result<Unptx, ()> {
-    // TODO
-    unimplemented!();
+impl UnptxModuleBuilder {
+  fn maybe_into(self) -> Result<UnptxModule, ()> {
+    Ok(UnptxModule{
+      version:  self.version.ok_or_else(|| ())?,
+      target:   self.target.ok_or_else(|| ())?,
+      addrsize: self.addrsize.ok_or_else(|| ())?,
+    })
+  }
+
+  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, mut lines: I) -> Result<UnptxModule, ()> {
+    for line in lines {
+      // TODO
+      match (self._state, line) {
+        (_, UnptxLine::ModuleDirective(dir)) => {
+          match dir {
+            ModuleDirective::Version(version) => {
+              if self.version.is_some() {
+                return Err(());
+              }
+              self.version = Some(version);
+            }
+            ModuleDirective::Target(target) => {
+              if self.target.is_some() {
+                return Err(());
+              }
+              self.target = Some(target);
+            }
+            ModuleDirective::AddressSize(addrsize) => {
+              if self.addrsize.is_some() {
+                return Err(());
+              }
+              self.addrsize = Some(addrsize);
+            }
+          }
+        }
+        _ => {}
+        //_ => unimplemented!(),
+      }
+    }
+    self.maybe_into()
   }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Unptx {
+pub struct UnptxModule {
   pub version:  Version,
   pub target:   Target,
   pub addrsize: AddressSize,
