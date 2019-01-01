@@ -6,12 +6,12 @@ use crate::{UnptxToken::*};
 
 use plex::{lexer, parser};
 
-use std::io::{BufRead};
+use std::io::{BufRead, Read};
 
 #[derive(Debug)]
 pub enum UnptxToken {
   Whitespace,
-  Comment,
+  LineComment,
   DotVersion,
   DotTarget,
   DotAddressSize,
@@ -36,7 +36,7 @@ pub enum UnptxToken {
 lexer! {
   fn next_token(text: 'a) -> UnptxToken;
   r"[ \t\r\n]+" => UnptxToken::Whitespace,
-  r"//.*" => UnptxToken::Comment,
+  r"//[^\n]*" => UnptxToken::LineComment,
   r"\.version" => UnptxToken::DotVersion,
   r"\.target" => UnptxToken::DotTarget,
   r"\.address_size" => UnptxToken::DotAddressSize,
@@ -69,21 +69,21 @@ lexer! {
   r"[_$%][a-zA-Z0-9_]+" => UnptxToken::Ident(text.to_owned()),
 }
 
-pub struct UnptxLineLexer<'s> {
+pub struct UnptxLexer<'s> {
   buf:  &'s str,
   eol:  bool,
 }
 
-impl<'s> UnptxLineLexer<'s> {
-  pub fn new(buf: &'s str) -> UnptxLineLexer<'s> {
-    UnptxLineLexer{
+impl<'s> UnptxLexer<'s> {
+  pub fn new(buf: &'s str) -> UnptxLexer<'s> {
+    UnptxLexer{
       buf,
       eol:  false,
     }
   }
 }
 
-impl<'s> Iterator for UnptxLineLexer<'s> {
+impl<'s> Iterator for UnptxLexer<'s> {
   type Item = UnptxToken;
 
   fn next(&mut self) -> Option<UnptxToken> {
@@ -95,12 +95,9 @@ impl<'s> Iterator for UnptxLineLexer<'s> {
         Some((tok, next_buf)) => {
           self.buf = next_buf;
           match tok {
-            UnptxToken::Whitespace => {
+            UnptxToken::Whitespace |
+            UnptxToken::LineComment => {
               continue;
-            }
-            UnptxToken::Comment => {
-              self.eol = true;
-              return None;
             }
             _ => {
               return Some(tok);
@@ -176,8 +173,129 @@ pub enum Directive {
 
 #[derive(Debug)]
 pub enum Inst {
+  //Group(InstGroup),
+  Group(Vec<Inst>),
   Ret,
   BarSync,
+}
+
+#[derive(Debug)]
+pub struct InstGroup(pub Vec<Inst>);
+
+#[derive(Debug)]
+pub enum UnptxTree {
+  Empty,
+  ModuleDirective(ModuleDirective),
+  KernelDirective,
+  FunctionDirective,
+  Inst(Inst),
+}
+
+impl UnptxTree {
+  pub fn from_reader<R: Read>(mut reader: R) -> Vec<UnptxTree> {
+    let mut text = String::new();
+    match reader.read_to_string(&mut text) {
+      Err(e) => panic!("failed to read text: {:?}", e),
+      Ok(_) => {}
+    }
+    match UnptxTree::parse(UnptxLexer::new(&text)) {
+      Err(e) => panic!("parse failure: {:?}", e),
+      Ok(trees) => trees,
+    }
+  }
+
+  pub fn parse<L: Iterator<Item=UnptxToken>>(lexer: L) -> Result<Vec<UnptxTree>, (Option<(UnptxToken, ())>, &'static str)> {
+    parse_trees(lexer.map(|tok| (tok, ())))
+  }
+}
+
+parser! {
+  fn parse_trees(UnptxToken, ());
+  trees: Vec<UnptxTree> {
+    => vec![],
+    trees[mut tt] tree[t] => {
+      tt.push(t);
+      tt
+    }
+  }
+  tree: UnptxTree {
+    //=> UnptxTree::Empty,
+    module_directive[d] => UnptxTree::ModuleDirective(d),
+    directives[dirs] Ident(id) LParen RParen => {
+      // TODO
+      UnptxTree::KernelDirective
+    }
+    inst[i] => UnptxTree::Inst(i),
+  }
+  module_directive: ModuleDirective {
+    DotVersion Int2Lit(major, minor) => {
+      let v = match (major, minor) {
+        (3, 2) => Version::Ptx_3_2,
+        (4, 0) => Version::Ptx_4_0,
+        (4, 1) => Version::Ptx_4_1,
+        (4, 2) => Version::Ptx_4_2,
+        (4, 3) => Version::Ptx_4_3,
+        (5, 0) => Version::Ptx_5_0,
+        (6, 0) => Version::Ptx_6_0,
+        (6, 1) => Version::Ptx_6_1,
+        (6, 3) => Version::Ptx_6_3,
+        _ => panic!(),
+      };
+      ModuleDirective::Version(v)
+    }
+    DotTarget Ident(target_arch) => {
+      let t = match &target_arch as &str {
+        "sm_20" => Target::Sm_2_0,
+        "sm_21" => Target::Sm_2_1,
+        "sm_30" => Target::Sm_3_0,
+        "sm_32" => Target::Sm_3_2,
+        "sm_35" => Target::Sm_3_5,
+        "sm_37" => Target::Sm_3_7,
+        "sm_50" => Target::Sm_5_0,
+        "sm_52" => Target::Sm_5_2,
+        "sm_53" => Target::Sm_5_3,
+        "sm_60" => Target::Sm_6_0,
+        "sm_61" => Target::Sm_6_1,
+        "sm_62" => Target::Sm_6_2,
+        "sm_70" => Target::Sm_7_0,
+        "sm_72" => Target::Sm_7_2,
+        "sm_75" => Target::Sm_7_5,
+        _ => panic!(),
+      };
+      ModuleDirective::Target(t)
+    }
+    DotAddressSize IntLit(bits) => {
+      let sz = match bits {
+        32 => AddressSize::_32,
+        64 => AddressSize::_64,
+        _ => panic!(),
+      };
+      ModuleDirective::AddressSize(sz)
+    }
+  }
+  directive: Directive {
+    DotVisible => Directive::Visible,
+    DotEntry => Directive::Entry,
+  }
+  directives: Vec<Directive> {
+    => vec![],
+    directives[mut dirs] directive[d] => {
+      dirs.push(d);
+      dirs
+    }
+  }
+  inst: Inst {
+    LCurl insts[ii] RCurl => Inst::Group(ii),
+    Ret Semi => Inst::Ret,
+    BarSync IntLit(_) Semi => Inst::BarSync,
+  }
+  insts: Vec<Inst> {
+    => vec![],
+    insts[mut ii] inst[i] => {
+      ii.push(i);
+      ii
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -301,7 +419,7 @@ impl<R: BufRead> Iterator for UnptxLines<R> {
     if buf.is_empty() {
       return None;
     }
-    match UnptxLine::parse(UnptxLineLexer::new(&buf)) {
+    match UnptxLine::parse(UnptxLexer::new(&buf)) {
       Err(e) => panic!("unptx: syntax error: {:?}", e),
       Ok(line) => Some(line),
     }
@@ -319,15 +437,15 @@ pub struct UnptxModuleBuilder {
 }
 
 impl UnptxModuleBuilder {
-  fn maybe_into(self) -> Result<UnptxModule, ()> {
+  fn maybe_into(self) -> Result<UnptxModule, &'static str> {
     Ok(UnptxModule{
-      version:  self.version.ok_or_else(|| ())?,
-      target:   self.target.ok_or_else(|| ())?,
-      addrsize: self.addrsize.ok_or_else(|| ())?,
+      version:  self.version.ok_or_else(|| "missing .version")?,
+      target:   self.target.ok_or_else(|| "missing .target")?,
+      addrsize: self.addrsize.ok_or_else(|| "missing .address_size")?,
     })
   }
 
-  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, lines: I) -> Result<UnptxModule, ()> {
+  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, lines: I) -> Result<UnptxModule, &'static str> {
     for line in lines {
       // TODO
       match (self._state, line) {
@@ -335,25 +453,64 @@ impl UnptxModuleBuilder {
           match dir {
             ModuleDirective::Version(version) => {
               if self.version.is_some() {
-                return Err(());
+                return Err("duplicate .version");
               }
               self.version = Some(version);
             }
             ModuleDirective::Target(target) => {
               if self.target.is_some() {
-                return Err(());
+                return Err("duplicate .target");
               }
               self.target = Some(target);
             }
             ModuleDirective::AddressSize(addrsize) => {
               if self.addrsize.is_some() {
-                return Err(());
+                return Err("duplicate .address_size");
               }
               self.addrsize = Some(addrsize);
             }
           }
         }
         _ => {}
+        //_ => unimplemented!(),
+      }
+    }
+    self.maybe_into()
+  }
+
+  pub fn with_trees<T: Iterator<Item=UnptxTree>>(mut self, trees: T) -> Result<UnptxModule, &'static str> {
+    for tree in trees {
+      // TODO
+      match (self._state, tree) {
+        (_, UnptxTree::ModuleDirective(dir)) => {
+          println!("DEBUG: ptx module builder: got module directive: {:?}", dir);
+          match dir {
+            ModuleDirective::Version(version) => {
+              if self.version.is_some() {
+                return Err("duplicate .version");
+              }
+              self.version = Some(version);
+            }
+            ModuleDirective::Target(target) => {
+              if self.target.is_some() {
+                return Err("duplicate .target");
+              }
+              self.target = Some(target);
+            }
+            ModuleDirective::AddressSize(addrsize) => {
+              if self.addrsize.is_some() {
+                return Err("duplicate .address_size");
+              }
+              self.addrsize = Some(addrsize);
+            }
+          }
+        }
+        (_, UnptxTree::Inst(inst)) => {
+          println!("DEBUG: ptx module builder: got inst tree: {:?}", inst);
+        }
+        (_, tree) => {
+          println!("DEBUG: ptx module builder: got tree: {:?}", tree);
+        }
         //_ => unimplemented!(),
       }
     }
@@ -369,8 +526,8 @@ pub struct UnptxModule {
 }
 
 impl UnptxModule {
-  pub fn from_reader<R: BufRead>(reader: R) -> Result<UnptxModule, ()> {
+  pub fn from_reader<R: BufRead>(reader: R) -> Result<UnptxModule, &'static str> {
     UnptxModuleBuilder::default()
-      .with_lines(UnptxLines::from_reader(reader))
+      .with_trees(UnptxTree::from_reader(reader).into_iter())
   }
 }
