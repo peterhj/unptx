@@ -1,8 +1,9 @@
 [package]
 name = "unptx"
 version = "0.0.0"
-authors = ["Peter Jin <peterhaijin@gmail.com>"]
 edition = "2018"
+authors = ["Peter Jin <peterhaijin@gmail.com>"]
+license = "Apache-2.0 OR MIT"
 
 [dependencies]
 plex = "^0.2"

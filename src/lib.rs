@@ -8,6 +8,7 @@ use plex::{lexer, parser};
 
 use std::io::{BufRead, Read};
 
+#[allow(non_camel_case_types)]
 #[derive(Debug)]
 pub enum UnptxToken {
   Whitespace,
@@ -18,15 +19,40 @@ pub enum UnptxToken {
   DotVisible,
   DotEntry,
   DotFunc,
+  DotReg,
+  DotB32,
+  DotB64,
   Colon,
   Semi,
+  Comma,
   LParen,
   RParen,
+  LBrack,
+  RBrack,
   LCurl,
   RCurl,
-  // instrs
+  // registers
+  Tid_X,
+  Tid_Y,
+  Tid_Z,
+  Ntid_X,
+  Ntid_Y,
+  Ntid_Z,
+  Ctaid_X,
+  Ctaid_Y,
+  Ctaid_Z,
+  Nctaid_X,
+  Nctaid_Y,
+  Nctaid_Z,
+  R1,
+  Rd1,
+  // opcodes
+  Trap,
   Ret,
-  BarSync,
+  Bar_Sync,
+  Mov_U32,
+  Mov_U64,
+  St_U32,
   // literals
   IntLit(i64),
   Int2Lit(i64, i64),
@@ -43,14 +69,38 @@ lexer! {
   r"\.visible" => UnptxToken::DotVisible,
   r"\.entry" => UnptxToken::DotEntry,
   r"\.func" => UnptxToken::DotFunc,
+  r"\.reg" => UnptxToken::DotReg,
+  r"\.b32" => UnptxToken::DotB32,
+  r"\.b64" => UnptxToken::DotB64,
   r":" => UnptxToken::Colon,
   r";" => UnptxToken::Semi,
+  r"," => UnptxToken::Comma,
   r"\(" => UnptxToken::LParen,
   r"\)" => UnptxToken::RParen,
+  r"\[" => UnptxToken::LBrack,
+  r"\]" => UnptxToken::RBrack,
   r"{" => UnptxToken::LCurl,
   r"}" => UnptxToken::RCurl,
+  r"%tid.x" => UnptxToken::Tid_X,
+  r"%tid.y" => UnptxToken::Tid_Y,
+  r"%tid.z" => UnptxToken::Tid_Z,
+  r"%ntid.x" => UnptxToken::Ntid_X,
+  r"%ntid.y" => UnptxToken::Ntid_Y,
+  r"%ntid.z" => UnptxToken::Ntid_Z,
+  r"%ctaid.x" => UnptxToken::Ctaid_X,
+  r"%ctaid.y" => UnptxToken::Ctaid_Y,
+  r"%ctaid.z" => UnptxToken::Ctaid_Z,
+  r"%nctaid.x" => UnptxToken::Nctaid_X,
+  r"%nctaid.y" => UnptxToken::Nctaid_Y,
+  r"%nctaid.z" => UnptxToken::Nctaid_Z,
+  r"%r1" => UnptxToken::R1,
+  r"%rd1" => UnptxToken::Rd1,
+  r"trap" => UnptxToken::Trap,
   r"ret" => UnptxToken::Ret,
-  r"bar\.sync" => UnptxToken::BarSync,
+  r"bar\.sync" => UnptxToken::Bar_Sync,
+  r"mov\.u32" => UnptxToken::Mov_U32,
+  r"mov\.u64" => UnptxToken::Mov_U64,
+  r"st\.u32" => UnptxToken::St_U32,
   r"[0-9]+" => {
     match text.parse() {
       Ok(x) => UnptxToken::IntLit(x),
@@ -165,22 +215,62 @@ pub enum ModuleDirective {
 }
 
 #[derive(Debug)]
-pub enum Directive {
+pub enum KernelDirective {
   Visible,
   Entry,
-  Func,
 }
 
+#[derive(Debug)]
+pub enum OtherDirective {
+  Func,
+  Reg,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+pub enum Reg {
+  Tid_X,
+  Tid_Y,
+  Tid_Z,
+  Ntid_X,
+  Ntid_Y,
+  Ntid_Z,
+  Ctaid_X,
+  Ctaid_Y,
+  Ctaid_Z,
+  Nctaid_X,
+  Nctaid_Y,
+  Nctaid_Z,
+  R1,
+  Rd1,
+}
+
+#[allow(non_camel_case_types)]
 #[derive(Debug)]
 pub enum Inst {
-  //Group(InstGroup),
   Group(Vec<Inst>),
+  Trap,
   Ret,
-  BarSync,
+  Bar_Sync_0,
+  Mov_U32((), ()),
+  Mov_U64((), ()),
+  St_U32((), ()),
 }
 
-#[derive(Debug)]
-pub struct InstGroup(pub Vec<Inst>);
+pub fn flatten_insts(insts: Vec<Inst>) -> Vec<Inst> {
+  let mut flat_insts = Vec::new();
+  _flatten_insts(&mut flat_insts, insts);
+  flat_insts
+}
+
+fn _flatten_insts(flat_insts: &mut Vec<Inst>, insts: Vec<Inst>) {
+  for inst in insts.into_iter() {
+    match inst {
+      Inst::Group(group_insts) => _flatten_insts(flat_insts, group_insts),
+      _ => flat_insts.push(inst),
+    }
+  }
+}
 
 #[derive(Debug)]
 pub enum UnptxTree {
@@ -188,6 +278,7 @@ pub enum UnptxTree {
   ModuleDirective(ModuleDirective),
   KernelDirective,
   FunctionDirective,
+  Reg(Reg),
   Inst(Inst),
 }
 
@@ -221,7 +312,7 @@ parser! {
   tree: UnptxTree {
     //=> UnptxTree::Empty,
     module_directive[d] => UnptxTree::ModuleDirective(d),
-    directives[dirs] Ident(id) LParen RParen => {
+    kernel_directives[dirs] Ident(id) LParen RParen => {
       // TODO
       UnptxTree::KernelDirective
     }
@@ -273,21 +364,35 @@ parser! {
       ModuleDirective::AddressSize(sz)
     }
   }
-  directive: Directive {
-    DotVisible => Directive::Visible,
-    DotEntry => Directive::Entry,
-  }
-  directives: Vec<Directive> {
+  kernel_directives: Vec<KernelDirective> {
     => vec![],
-    directives[mut dirs] directive[d] => {
+    kernel_directives[mut dirs] kernel_directive[d] => {
       dirs.push(d);
       dirs
     }
   }
-  inst: Inst {
-    LCurl insts[ii] RCurl => Inst::Group(ii),
-    Ret Semi => Inst::Ret,
-    BarSync IntLit(_) Semi => Inst::BarSync,
+  kernel_directive: KernelDirective {
+    DotVisible => KernelDirective::Visible,
+    DotEntry => KernelDirective::Entry,
+    //DotReg => Directive::Reg,
+    //DotB32 => _,
+    //DotB64 => _,
+  }
+  reg: Reg {
+    Tid_X => Reg::Tid_X,
+    Tid_Y => Reg::Tid_Y,
+    Tid_Z => Reg::Tid_Z,
+    Ntid_X => Reg::Ntid_X,
+    Ntid_Y => Reg::Ntid_Y,
+    Ntid_Z => Reg::Ntid_Z,
+    Ctaid_X => Reg::Ctaid_X,
+    Ctaid_Y => Reg::Ctaid_Y,
+    Ctaid_Z => Reg::Ctaid_Z,
+    Nctaid_X => Reg::Nctaid_X,
+    Nctaid_Y => Reg::Nctaid_Y,
+    Nctaid_Z => Reg::Nctaid_Z,
+    R1 => Reg::R1,
+    Rd1 => Reg::Rd1,
   }
   insts: Vec<Inst> {
     => vec![],
@@ -296,133 +401,14 @@ parser! {
       ii
     }
   }
-}
-
-#[derive(Debug)]
-pub enum UnptxLine {
-  Empty,
-  ModuleDirective(ModuleDirective),
-  KernelDirective,
-  FunctionDirective,
-  Inst(Inst),
-}
-
-impl UnptxLine {
-  pub fn parse<L: Iterator<Item=UnptxToken>>(line_lexer: L) -> Result<UnptxLine, (Option<(UnptxToken, ())>, &'static str)> {
-    parse(line_lexer.map(|tok| (tok, ())))
-  }
-
-  pub fn is_empty(&self) -> bool {
-    match self {
-      &UnptxLine::Empty => true,
-      _ => false,
-    }
-  }
-}
-
-parser! {
-  fn parse(UnptxToken, ());
-  line: UnptxLine {
-    => UnptxLine::Empty,
-    LCurl => UnptxLine::Empty,
-    RCurl => UnptxLine::Empty,
-    module_directive[d] => UnptxLine::ModuleDirective(d),
-    directives[dirs] Ident(id) LParen RParen => {
-      // TODO
-      UnptxLine::KernelDirective
-    }
-    inst[i] => UnptxLine::Inst(i),
-  }
-  module_directive: ModuleDirective {
-    DotVersion Int2Lit(major, minor) => {
-      let v = match (major, minor) {
-        (3, 2) => Version::Ptx_3_2,
-        (4, 0) => Version::Ptx_4_0,
-        (4, 1) => Version::Ptx_4_1,
-        (4, 2) => Version::Ptx_4_2,
-        (4, 3) => Version::Ptx_4_3,
-        (5, 0) => Version::Ptx_5_0,
-        (6, 0) => Version::Ptx_6_0,
-        (6, 1) => Version::Ptx_6_1,
-        (6, 3) => Version::Ptx_6_3,
-        _ => panic!(),
-      };
-      ModuleDirective::Version(v)
-    }
-    DotTarget Ident(target_arch) => {
-      let t = match &target_arch as &str {
-        "sm_20" => Target::Sm_2_0,
-        "sm_21" => Target::Sm_2_1,
-        "sm_30" => Target::Sm_3_0,
-        "sm_32" => Target::Sm_3_2,
-        "sm_35" => Target::Sm_3_5,
-        "sm_37" => Target::Sm_3_7,
-        "sm_50" => Target::Sm_5_0,
-        "sm_52" => Target::Sm_5_2,
-        "sm_53" => Target::Sm_5_3,
-        "sm_60" => Target::Sm_6_0,
-        "sm_61" => Target::Sm_6_1,
-        "sm_62" => Target::Sm_6_2,
-        "sm_70" => Target::Sm_7_0,
-        "sm_72" => Target::Sm_7_2,
-        "sm_75" => Target::Sm_7_5,
-        _ => panic!(),
-      };
-      ModuleDirective::Target(t)
-    }
-    DotAddressSize IntLit(bits) => {
-      let sz = match bits {
-        32 => AddressSize::_32,
-        64 => AddressSize::_64,
-        _ => panic!(),
-      };
-      ModuleDirective::AddressSize(sz)
-    }
-  }
-  directive: Directive {
-    DotVisible => Directive::Visible,
-    DotEntry => Directive::Entry,
-  }
-  directives: Vec<Directive> {
-    directive[d] => {
-      vec![d]
-    }
-    directives[mut dirs] directive[d] => {
-      dirs.push(d);
-      dirs
-    }
-  }
   inst: Inst {
+    LCurl insts[ii] RCurl => Inst::Group(ii),
+    Trap Semi => Inst::Trap,
     Ret Semi => Inst::Ret,
-    BarSync IntLit(_) Semi => Inst::BarSync,
-  }
-}
-
-pub struct UnptxLines<R> {
-  reader:   R,
-}
-
-impl<R> UnptxLines<R> {
-  pub fn from_reader(reader: R) -> UnptxLines<R> {
-    UnptxLines{reader}
-  }
-}
-
-impl<R: BufRead> Iterator for UnptxLines<R> {
-  type Item = UnptxLine;
-
-  fn next(&mut self) -> Option<UnptxLine> {
-    let mut buf = String::new();
-    if self.reader.read_line(&mut buf).is_err() {
-      return None;
-    }
-    if buf.is_empty() {
-      return None;
-    }
-    match UnptxLine::parse(UnptxLexer::new(&buf)) {
-      Err(e) => panic!("unptx: syntax error: {:?}", e),
-      Ok(line) => Some(line),
-    }
+    Bar_Sync IntLit(0) Semi => Inst::Bar_Sync_0,
+    Bar_Sync IntLit(i) Semi => panic!("unsupported bar.sync int argument: {:?}", i),
+    //Mov_U32 reg[dst] Comma reg[src] Semi => Inst::Mov_U32(dst, src),
+    //Mov_U64 reg[dst] Comma reg[src] Semi => Inst::Mov_U64(dst, src),
   }
 }
 
@@ -443,39 +429,6 @@ impl UnptxModuleBuilder {
       target:   self.target.ok_or_else(|| "missing .target")?,
       addrsize: self.addrsize.ok_or_else(|| "missing .address_size")?,
     })
-  }
-
-  pub fn with_lines<I: Iterator<Item=UnptxLine>>(mut self, lines: I) -> Result<UnptxModule, &'static str> {
-    for line in lines {
-      // TODO
-      match (self._state, line) {
-        (_, UnptxLine::ModuleDirective(dir)) => {
-          match dir {
-            ModuleDirective::Version(version) => {
-              if self.version.is_some() {
-                return Err("duplicate .version");
-              }
-              self.version = Some(version);
-            }
-            ModuleDirective::Target(target) => {
-              if self.target.is_some() {
-                return Err("duplicate .target");
-              }
-              self.target = Some(target);
-            }
-            ModuleDirective::AddressSize(addrsize) => {
-              if self.addrsize.is_some() {
-                return Err("duplicate .address_size");
-              }
-              self.addrsize = Some(addrsize);
-            }
-          }
-        }
-        _ => {}
-        //_ => unimplemented!(),
-      }
-    }
-    self.maybe_into()
   }
 
   pub fn with_trees<T: Iterator<Item=UnptxTree>>(mut self, trees: T) -> Result<UnptxModule, &'static str> {
